@@ -81,12 +81,12 @@ void C_Utility::TlsProfileSample::GetMaxLen(ItemType type, OUT std::wstring& pre
 	{
 	case C_Utility::THREAD_ID:
 	{
-		wss << std::fixed << std::setprecision(3) << dwThreadId;
+		wss << dwThreadId;
 		break;
 	}
 	case C_Utility::NAME:
 	{
-		wss << std::fixed << std::setprecision(3) << szName;
+		wss << szName;
 		break;
 	}
 	case C_Utility::AVERAGE:
@@ -109,7 +109,7 @@ void C_Utility::TlsProfileSample::GetMaxLen(ItemType type, OUT std::wstring& pre
 	}
 	case C_Utility::CALL:
 	{
-		wss << std::fixed << std::setprecision(3) << iCall;
+		wss << iCall;
 		break;
 	}
 	default:

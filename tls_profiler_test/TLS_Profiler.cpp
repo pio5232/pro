@@ -393,5 +393,8 @@ inline void C_Utility::ProfileWriter::WriteLine()
 void C_Utility::ProfileWriter::Close()
 {
 	if (file)
+	{
 		fclose(file);
+		file = nullptr;
+	}
 }

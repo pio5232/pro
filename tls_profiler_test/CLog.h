@@ -1,12 +1,6 @@
 #ifndef PRINT_LOG
 #define PRINT_LOG
 
-#ifndef LOG_EXPORT
-#define LOG_EXPORT __declspec(dllexport)
-#else
-#deifne LOG_EXPORT __declspec(dllimport)
-#endif
-
 #include <Windows.h>
 #include <iostream>
 
@@ -29,10 +23,8 @@ namespace C_Utility
 	static int g_iLogLevel = dfLOG_LEVEL_ERROR; // 출력 저장 대상의 로그 레벨
 	static WCHAR g_szLogBuff[1024]; // 로그 저장시 피룡한 임시 버퍼
 
-	extern "C" {
 
-		LOG_EXPORT void Log(WCHAR* szString, int iLogLevel);
-	}
+	void Log(WCHAR* szString, int iLogLevel);
 
 	}
 #endif

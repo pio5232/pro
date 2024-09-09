@@ -21,15 +21,15 @@
     <ClCompile Include="TLS_Profiler.cpp">
       <Filter>헤더 파일</Filter>
     </ClCompile>
-    <ClCompile Include="CLog.cpp">
-      <Filter>헤더 파일</Filter>
+    <ClCompile Include="Functor.cpp">
+      <Filter>소스 파일</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="TLS_Profiler.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="CLog.h">
+    <ClInclude Include="Functor.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
   </ItemGroup>

@@ -3,8 +3,10 @@
 
 
 #include <Windows.h>
-#include <unordered_map>
+//#include <unordered_map>
+#include <map>
 #include <iostream>
+#include "Functor.h"
 
 namespace C_Utility
 {
@@ -38,7 +40,7 @@ namespace C_Utility
 	/*--------------------------------------------------
 			SAMPLE (MANAGER에서 관리하는 구조체)
 	--------------------------------------------------*/
-	struct TlsProfileSample sealed
+	struct TlsProfileSample
 	{
 		void InitializeSample(const WCHAR* tag);
 	public:
@@ -49,7 +51,7 @@ namespace C_Utility
 
 		// 
 		void GetMaxLen(ItemType type, OUT std::wstring& prevMaxWstr);
-		bool WriteContent(size_t* len_arr);
+		void WriteContent(size_t* len_arr);
 	private:
 		WCHAR szName[64]; // 태그 이름
 		//__int64 iFlag; // 프로파일의 사용 여부
@@ -64,20 +66,22 @@ namespace C_Utility
 		BYTE ucIgnoreCnt;
 	};
 
-
 	/*--------------------------------------------------
 				MANAGER (스레드마다 1개씩)
 	--------------------------------------------------*/
-	class TlsProfileManager sealed
+	// 스레드 하나에 있는 TLS_PROFILE_SAMPLE[N]에 대한 정보를 가지고 있는 클래스.
+	class TlsProfileManager final
 	{
+	private:
 	public:
-		using MappingTable = std::unordered_map<const WCHAR*, TlsProfileSample*>;
+		using MappingTable = std::map < const WCHAR*, TlsProfileSample*, Functor>;
 		void Begin(const WCHAR* tag);
 		void End(const WCHAR* tag);
 		friend class Wrapper;
 
+		int GetElementsCount() const { return _sampleMappingTable.size(); }
 		int GetMaxLen(ItemType type);
-		bool WriteContent(size_t* len_arr);
+		void WriteContent(size_t* len_arr);
 		bool ReleaseAll();
 
 		~TlsProfileManager();
@@ -85,13 +89,12 @@ namespace C_Utility
 		TlsProfileManager();
 		TlsProfileSample* GetSample(const WCHAR* tag);
 		MappingTable _sampleMappingTable;
+		SRWLOCK _lock;
 	};
-
 
 	/*-----------------------------
 	*		Manager Wrapper
 	-----------------------------*/
-	// 스레드 하나에 있 TLS_PROFILE_SAMPLE[N]에 대한 정보를 가지고 있는 클래스.
 	class Wrapper
 	{
 	public:
@@ -113,7 +116,7 @@ namespace C_Utility
 	/*--------------------------------------------------
 						BOSS (총괄)
 	--------------------------------------------------*/
-	class ProfileBoss sealed
+	class ProfileBoss final
 	{
 	public:
 		enum class ERROR_CODE
@@ -127,12 +130,14 @@ namespace C_Utility
 
 		static void Init() {QueryPerformanceFrequency(&s_frequency);}
 		inline static LARGE_INTEGER GetFrequency() { return s_frequency;  }
-		
+		inline static ERROR_CODE GetErrorCode() { return s_errCode; }
 		static bool RegistManager(TlsProfileManager* manager);
 		static bool SaveFile(const WCHAR* fileName);
+		static bool AllResourceRelease(); // delete all sample + manager
 	private:
-		static bool AllResourcesRelease();
+		static bool AllDataReset(); // delete all sample
 		ProfileBoss();
+		~ProfileBoss();
 		static LARGE_INTEGER s_frequency;
 		static volatile USHORT s_count;
 		static TlsProfileManager* s_managers[TLS_PROFILE_ARR_MAX];
@@ -142,7 +147,7 @@ namespace C_Utility
 	/*----------------------------------------
 					파일 저장
 	----------------------------------------*/
-	class ProfileWriter sealed
+	class ProfileWriter
 	{
 	public:
 		// 열기, Profiler 저장
@@ -171,6 +176,19 @@ namespace C_Utility
 		const WCHAR* _tag;
 	};
 
+	/*-------RAII--------
+		  LockGuard
+	-------------------*/
+
+	class SRWLockGuard
+	{
+	public:
+		SRWLockGuard(SRWLOCK* pLock) : _pLock(pLock) { AcquireSRWLockExclusive(_pLock); }
+		~SRWLockGuard() { ReleaseSRWLockExclusive(_pLock); }
+		
+		SRWLOCK* _pLock;
+	};
+
 }
 
 	//extern thread_local Wrapper wrapper;
@@ -181,13 +199,14 @@ namespace C_Utility
 /*--------------------------------------------------------------------------------------
 									  사용 규칙
 
-- 저장은 무조건 모든 스레드들이 Begin() / End() 호출을 하지 않는 상황에서 일어나야 한다.
-- SaveFile은 무조건 메인 스레드가 실행시킨다.
-- 또한 모든 스레드들이 종료된 상황에서 SaveFile()이 실행되어야한다.
-- 그렇지 않으면 실행되고 있는 스레드가 저장하는 정보는 제대로 저장이 되지 않을 수 있다.
+- 저장을 하게되면 현재 기록한 측정 데이터는 삭제된다. 
 
-- 리소스의 해제는 PROFILE_BOSS::AllResourcesRelease()를 통해 모든 리소스를 해제하도록 한다.
-- 현재는 파일 저장을 하면 모든 리소스를 해제하도록 했다.
+- 리소스의 해제는 PROFILE_BOSS::AllResourceRelease()를 통해 모든 리소스를 해제하도록 한다.
+
+- 데이터를 뽑아내면 해당 스레드의 모든 sample을 삭제한다. (PROFILE_BOSS:AllDataReset) 
+( TLS_PROFILE_MANAGER만 존재하는 형태 )
+
+
 --------------------------------------------------------------------------------------*/
 
 
@@ -197,7 +216,8 @@ namespace C_Utility
 
 /*--------------------------------------------------
 		   나중에 상황 봐서 추가해야 할 것
-			
-		1. TLS_PROFILE_MANAGER의 RESET 기능
-		2. PROFILE_BOSS의 에러 코드 업데이트
+
+		1. PROFILE_BOSS의 에러 코드와 에러 처리 만들기.
+		2. PROFILE_BOSS::AllResourceRelease() 로그를 눈으로 볼 수 있는 타이밍 정하기 (현재 소멸자)
 --------------------------------------------------*/
+

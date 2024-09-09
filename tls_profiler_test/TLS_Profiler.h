@@ -136,8 +136,6 @@ namespace C_Utility
 		static bool AllResourceRelease(); // delete all sample + manager
 	private:
 		static bool AllDataReset(); // delete all sample
-		ProfileBoss();
-		~ProfileBoss();
 		static LARGE_INTEGER s_frequency;
 		static volatile USHORT s_count;
 		static TlsProfileManager* s_managers[TLS_PROFILE_ARR_MAX];
@@ -219,5 +217,6 @@ namespace C_Utility
 
 		1. PROFILE_BOSS의 에러 코드와 에러 처리 만들기.
 		2. PROFILE_BOSS::AllResourceRelease() 로그를 눈으로 볼 수 있는 타이밍 정하기 (현재 소멸자)
+		3. 멀티스레드 환경에서 파일 저장을 위한 lock 추가
 --------------------------------------------------*/
 

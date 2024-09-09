@@ -322,12 +322,6 @@ bool C_Utility::ProfileBoss::AllResourceRelease()
 	return true;
 }
 
-C_Utility::ProfileBoss::~ProfileBoss()
-{
-	AllResourceRelease();
-}
-
-
 bool C_Utility::ProfileWriter::Open(const WCHAR* fileName)
 {
 	std::wstring wstr(fileName);

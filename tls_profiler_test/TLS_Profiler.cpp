@@ -7,12 +7,8 @@
 using namespace C_Utility;
 #define TLS_PROFILER_EXPORT
 
-LARGE_INTEGER ProfileBoss::s_frequency = {};
-volatile USHORT ProfileBoss::s_count = -1;
-TlsProfileManager* ProfileBoss::s_managers[TLS_PROFILE_ARR_MAX]{};
-ProfileBoss::ERROR_CODE ProfileBoss::s_errCode = ProfileBoss::ERROR_CODE::NONE;
-FILE* ProfileWriter::file = nullptr;
-
+#include <iostream>
+#include <chrono>
 //thread_local Wrapper wrapper;
 
 /*--------------------------------------------------
@@ -78,7 +74,7 @@ void C_Utility::TlsProfileSample::End(LARGE_INTEGER endTime)
 	iCall++;
 }
 
-void C_Utility::TlsProfileSample::GetMaxLen(ItemType type, OUT std::wstring& prevMaxWstr)
+void C_Utility::TlsProfileSample::GetMaxStr(ItemType type, OUT std::wstring& prevMaxWstr)
 {
 	int prevMaxLen = prevMaxWstr.length();
 
@@ -97,7 +93,7 @@ void C_Utility::TlsProfileSample::GetMaxLen(ItemType type, OUT std::wstring& pre
 	}
 	case C_Utility::AVERAGE:
 	{
-		double calc = (double)iTotalTime / (ProfileBoss::GetFrequency().QuadPart * iCall) * 1000000;
+		double calc = (double)iTotalTime / (ProfileBoss::GetInstance().GetFrequency().QuadPart * iCall) * 1000000;
 		wss << std::fixed << std::setprecision(3) << calc << L"㎲";
 		break;
 	}
@@ -105,14 +101,14 @@ void C_Utility::TlsProfileSample::GetMaxLen(ItemType type, OUT std::wstring& pre
 	{
 		if (iCall)
 		{
-			double calc = ((double)iMin[0]) / ProfileBoss::GetFrequency().QuadPart * 1000000;
+			double calc = ((double)iMin[0]) / ProfileBoss::GetInstance().GetFrequency().QuadPart * 1000000;
 			wss << std::fixed << std::setprecision(3) << calc << L"㎲";
 		}
 		break;
 	}
 	case C_Utility::MAX:
 	{
-		double calc = ((double)iMax[0]) / ProfileBoss::GetFrequency().QuadPart * 1000000;
+		double calc = ((double)iMax[0]) / ProfileBoss::GetInstance().GetFrequency().QuadPart * 1000000;
 		wss << std::fixed << std::setprecision(3) << calc << L"㎲";
 		break;
 	}
@@ -133,22 +129,25 @@ void C_Utility::TlsProfileSample::GetMaxLen(ItemType type, OUT std::wstring& pre
 	}
 }
 
-void C_Utility::TlsProfileSample::WriteContent(size_t* len_arr)
+void C_Utility::TlsProfileSample::ContainAttributes(std::vector<std::wstring>& attributesArray)
 {
 	std::wstring attributes[6];
 
-	GetMaxLen(THREAD_ID, attributes[THREAD_ID]);
-	GetMaxLen(NAME, attributes[NAME]);
-	GetMaxLen(AVERAGE, attributes[AVERAGE]);
-	GetMaxLen(MIN, attributes[MIN]);
-	GetMaxLen(MAX, attributes[MAX]);
-	GetMaxLen(CALL, attributes[CALL]);
+	GetMaxStr(THREAD_ID, attributes[THREAD_ID]);
+	GetMaxStr(NAME, attributes[NAME]);
+	GetMaxStr(AVERAGE, attributes[AVERAGE]);
+	GetMaxStr(MIN, attributes[MIN]);
+	GetMaxStr(MAX, attributes[MAX]);
+	GetMaxStr(CALL, attributes[CALL]);
 
 	// if CallCnt == 0, Skip
 	if (attributes[CALL] == L"0")
 		return;
 
-	ProfileWriter::WriteContent(len_arr, attributes);
+	for (int i = THREAD_ID; i < ITEM_TYPE_MAX; i++)
+	{
+		attributesArray.push_back(std::move(attributes[i]));
+	}
 	return;
 }
 
@@ -159,7 +158,7 @@ void C_Utility::TlsProfileSample::WriteContent(size_t* len_arr)
 C_Utility::TlsProfileManager::TlsProfileManager()
 {
 	InitializeSRWLock(&_lock);
-	ProfileBoss::RegistManager(this);
+	ProfileBoss::GetInstance().RegistManager(this);
 }
 
 C_Utility::TlsProfileManager::~TlsProfileManager()
@@ -218,17 +217,17 @@ int C_Utility::TlsProfileManager::GetMaxLen(ItemType type)
 	std::wstring maxWstr(L"");
 	for (auto& pair : _sampleMappingTable)
 	{
-		pair.second->GetMaxLen((type), maxWstr);
+		pair.second->GetMaxStr((type), maxWstr);
 	}
 	return maxWstr.length();
 }
 
-void C_Utility::TlsProfileManager::WriteContent(size_t* len_arr)
+void C_Utility::TlsProfileManager::ContainAttributes(std::vector<std::wstring>& attributesArray)
 {
 	SRWLockGuard lockGuard(&_lock);
 	for (auto& pair : _sampleMappingTable)
 	{
-		pair.second->WriteContent(len_arr);
+		pair.second->ContainAttributes(attributesArray);
 	}
 }
 
@@ -238,35 +237,36 @@ void C_Utility::TlsProfileManager::WriteContent(size_t* len_arr)
 
 bool C_Utility::ProfileBoss::RegistManager(TlsProfileManager* manager)
 {
-	USHORT cur = InterlockedIncrement16((SHORT*)&s_count);
+	USHORT cur = InterlockedIncrement16((SHORT*)&_count);
 	
-	if (cur == 0) // 초기에 init 실행
-		Init();
-
 	if (cur >= TLS_PROFILE_ARR_MAX)
 	{
-		s_errCode = ERROR_CODE::REGIST_FAILED;
+		_errCode = ERROR_CODE::REGIST_FAILED;
 		return false;
 	}
-	s_managers[cur] = manager;
+	_managers[cur] = manager;
 
 	return true;
 }
 
 bool C_Utility::ProfileBoss::SaveFile(const WCHAR* fileName)
 {
-	if (false == ProfileWriter::Open(fileName))
+	SRWLockGuard lockGuard(&_writer.GetLock());
+
+	if (false == _writer.Open(fileName))
 	{
-		s_errCode = ERROR_CODE::FILE_OPEN_FAILED;
+		_errCode = ERROR_CODE::FILE_OPEN_FAILED;
 		return false;
 	}
 	
 	const wchar_t* str[] = { L"Thread ID", L"Func Name", L"Average",L"Min", L"Max", L"Call" };
 	size_t len_arr[] = { wcslen(str[0]) ,wcslen(str[1]),wcslen(str[2]) ,wcslen(str[3]),wcslen(str[4]), wcslen(str[5]) };
 
-	for (int i = 0; i <= s_count; i++)
+	// 카운트가 줄어들 일은 없다!
+	int cntSnapshot = _count;
+	for (int i = 0; i <= cntSnapshot; i++)
 	{
-		TlsProfileManager* manager = s_managers[i];
+		TlsProfileManager* manager = _managers[i];
 
 		len_arr[0] = max(len_arr[0], manager->GetMaxLen(THREAD_ID));
 		len_arr[1] = max(len_arr[1], manager->GetMaxLen(NAME));
@@ -276,25 +276,36 @@ bool C_Utility::ProfileBoss::SaveFile(const WCHAR* fileName)
 		len_arr[5] = max(len_arr[5], manager->GetMaxLen(CALL));
 	}
 
-	ProfileWriter::WriteTitle(len_arr, str, _countof(str));
-	
-	for (int i = 0; i <= s_count; i++)
+	_writer.WriteTitle(len_arr, str, _countof(str));
 	{
-		std::wstring sample_attr[_countof(str)];
+		std::vector<std::wstring> attributesArray;
 
-		TlsProfileManager* manager = s_managers[i];
-
-		if (manager->GetElementsCount())
+		for (int i = 0; i <= cntSnapshot; i++)
 		{
-			manager->WriteContent(len_arr);
+			TlsProfileManager* manager = _managers[i];
 
-			ProfileWriter::WriteEnter();
+			int sampleCntSnapshot = manager->GetElementsCount();
+			if (sampleCntSnapshot)
+			{
+				if (attributesArray.capacity() < sampleCntSnapshot)
+					attributesArray.reserve(sampleCntSnapshot);
+				
+				//auto start = std::chrono::high_resolution_clock::now();
+				manager->ContainAttributes(attributesArray);
+				//auto end = std::chrono::high_resolution_clock::now();
+				//std::chrono::duration<double> elapsed = end - start;
+				//printf("%lf 초 경과\n", elapsed);
+
+				_writer.WriteContent(len_arr, attributesArray);
+				_writer.WriteEnter();
+			}
+
+			attributesArray.clear();
 		}
 	}
+	_writer.WriteLine();
 
-	ProfileWriter::WriteLine();
-
-	ProfileWriter::Close();
+	_writer.Close();
 
 	AllDataReset();
 
@@ -303,26 +314,26 @@ bool C_Utility::ProfileBoss::SaveFile(const WCHAR* fileName)
 
 bool C_Utility::ProfileBoss::AllDataReset()
 {
-	for (int i = 0; i <= s_count; i++)
+	for (int i = 0; i <= _count; i++)
 	{
-		s_managers[i]->ReleaseAll();
+		_managers[i]->ReleaseAll();
 	}
 	return true;
 }
 
 bool C_Utility::ProfileBoss::AllResourceRelease()
 {
-	USHORT sCnt = InterlockedExchange16((SHORT*)&s_count, -1);
+	USHORT sCnt = InterlockedExchange16((SHORT*)&_count, -1);
 
 	for (int i = 0; i <= sCnt; i++)
 	{
-		s_managers[i]->ReleaseAll();
-		delete s_managers[i];
+		_managers[i]->ReleaseAll();
+		delete _managers[i];
 	}
 	return true;
 }
 
-bool C_Utility::ProfileWriter::Open(const WCHAR* fileName)
+bool C_Utility::ProfileBoss::ProfileWriter::Open(const WCHAR* fileName)
 {
 	std::wstring wstr(fileName);
 
@@ -331,9 +342,9 @@ bool C_Utility::ProfileWriter::Open(const WCHAR* fileName)
 		wstr += L".txt";
 	}
 
-	errno_t error = _wfopen_s(&file, wstr.c_str(), L"w,ccs=UTF-16LE");
+	errno_t error = _wfopen_s(&_file, wstr.c_str(), L"w,ccs=UTF-16LE");
 
-	if (!file || error)
+	if (!_file || error)
 	{
 		std::cout << "File is null [ GetLastError : " << GetLastError() << " ] " << std::endl;
 
@@ -344,7 +355,7 @@ bool C_Utility::ProfileWriter::Open(const WCHAR* fileName)
 	return true;
 }
 
-void C_Utility::ProfileWriter::WriteTitle(size_t* len_arr, const wchar_t** title_arr,int size)
+void C_Utility::ProfileBoss::ProfileWriter::WriteTitle(size_t* len_arr, const wchar_t** title_arr,int size)
 {
 	std::wstring title;
 
@@ -370,56 +381,60 @@ void C_Utility::ProfileWriter::WriteTitle(size_t* len_arr, const wchar_t** title
 
 		title += L"|";
 	}
-
+	
 	title += L"\n";
-	fwprintf_s(file, title.c_str());
+	fwprintf_s(_file, title.c_str());
 	WriteLine();
 }
 
-void C_Utility::ProfileWriter::WriteContent(size_t* len_arr, std::wstring* attribute)
+void C_Utility::ProfileBoss::ProfileWriter::WriteContent(size_t* len_arr, std::vector<std::wstring>& attribute)
 {
 	std::wstring content;
-	content += L"|";
-
-	for (int k = 0; k < 6; k++)
+	for (int i = 0; i < (attribute.size() / ITEM_TYPE_MAX); i++)
 	{
-		int diff = len_arr[k] - wcslen(attribute[k].c_str());
-
-		int r_padding_count = diff % 2 == 0 ? (diff >> 1) + 1 : (diff >> 1) + 2;
-
-		int l_padding_count = (diff >> 1) + 1;
-
-		for (int l = 0; l < l_padding_count; l++)
-			content += L" ";
-
-		content += attribute[k];
-
-
-		for (int l = 0; l < r_padding_count; l++)
-			content += L" ";
-
+		content.clear();
 		content += L"|";
+
+		for (int j = THREAD_ID + i * ITEM_TYPE_MAX; j < ITEM_TYPE_MAX * (i+1); j++)
+		{
+			int diff = len_arr[j%ITEM_TYPE_MAX] - wcslen(attribute[j].c_str());
+
+			int r_padding_count = diff % 2 == 0 ? (diff >> 1) + 1 : (diff >> 1) + 2;
+
+			int l_padding_count = (diff >> 1) + 1;
+
+			for (int k = 0; k < l_padding_count; k++)
+				content += L" ";
+
+			content += attribute[j];
+
+
+			for (int k = 0; k < r_padding_count; k++)
+				content += L" ";
+
+			content += L"|";
+		}
+		content += L"\n";
+
+		fwprintf_s(_file, content.c_str());
 	}
-	content += L"\n";
-
-	fwprintf_s(file, content.c_str());
 }
 
-inline void C_Utility::ProfileWriter::WriteEnter()
+inline void C_Utility::ProfileBoss::ProfileWriter::WriteEnter()
 {
-	fwprintf_s(file, L"\n");
+	fwprintf_s(_file, L"\n");
 }
 
-inline void C_Utility::ProfileWriter::WriteLine()
+inline void C_Utility::ProfileBoss::ProfileWriter::WriteLine()
 {
-	fwprintf_s(file, L"--------------------------------------------------------------------------------------------\n");
+	fwprintf_s(_file, L"--------------------------------------------------------------------------------------------\n");
 }
 
-void C_Utility::ProfileWriter::Close()
+void C_Utility::ProfileBoss::ProfileWriter::Close()
 {
-	if (file)
+	if (_file)
 	{
-		fclose(file);
-		file = nullptr;
+		fclose(_file);
+		_file = nullptr;
 	}
 }

@@ -107,9 +107,7 @@ int main()
 	if (TLS_SAVE("SF3"))
 		std::cout << "성공" << std::endl;
 
-
 	//---------------------------------------------------------
-	ProfileBoss::AllResourceRelease();
 
 	return 0;
 }
